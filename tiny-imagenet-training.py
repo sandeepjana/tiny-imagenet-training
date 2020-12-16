@@ -9,6 +9,8 @@ import tensorflow_addons as tfa
 from tensorflow.keras.callbacks import ModelCheckpoint
 
 from mobilenet_v2 import MobileNetV2
+from densenet_custom import densenet_custom
+
 from optimizer_functions import sgdw_triangle
 
 # debug
@@ -28,18 +30,18 @@ MAX_BATCH_SIZE = 128
 CYCLE_LENGTH_IN_EPOCHS = 40
 MIN_LR = 1e-5
 MAX_LR = 1e-2
-INIT_WD = 4e-5
+INIT_WD = 1e-5
 WD_DECAY_FOR_CYCLE = 0.5
 
 # input image dimensions
 IMAGE_SIZE = 64
-num_classes = 200
+NUM_CLASSES = 200
 NUM_TRAIN_SAMPLES = 100 * 1000
 
 ROOT_DIR = r'C:\stuff\datasets\tiny-imagenet-200'
 CACHE = True
 SHUFFLE = True
-SHUFFLE_SAMPLES = 10 * 1000 
+SHUFFLE_SAMPLES = 10 * 1000
 
 autotune = tf.data.experimental.AUTOTUNE
 
@@ -56,7 +58,7 @@ def get_train_files_labels(root, max_batch_size):
     if SHUFFLE:
         np.random.shuffle(paths)
 
-    # Drop some files to make the number of samples multiple of 
+    # Drop some files to make the number of samples multiple of
     # some number to ease pre-processing in batches
     paths = paths[:(len(paths)//max_batch_size) * max_batch_size]
 
@@ -168,20 +170,23 @@ train_ds, val_ds = get_train_val_datasets()
 # debug_visualize(train_ds)
 
 optimizer = get_optimizer()
-model = MobileNetV2((64, 64, 3), weights=None, classes=200)
+# model = MobileNetV2((64, 64, 3), weights=None, classes=NUM_CLASSES)
+model = densenet_custom()
+
 model.compile(loss='sparse_categorical_crossentropy',
               optimizer=optimizer,
               metrics=['accuracy'])
 
 # Callbacks
-checkpointer = ModelCheckpoint(filepath=model.name + "-{epoch:02d}-{val_loss:.2f}.hdf5", 
+checkpointer = ModelCheckpoint(filepath=model.name + \
+    '-{epoch:02d}-{val_loss:.2f}-{val_accuracy:.2f}-.h5',
     verbose=1, save_best_only=True, monitor="val_accuracy")
 
 
 model.fit(x=train_ds,
     validation_data=val_ds,
     epochs=EPOCHS,
-    verbose=1, 
+    verbose=1,
     callbacks=[checkpointer])
 
 print('Finished!')
