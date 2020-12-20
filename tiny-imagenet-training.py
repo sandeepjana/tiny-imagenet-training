@@ -11,6 +11,8 @@ from tensorflow.keras.callbacks import ModelCheckpoint
 from mobilenet_v2 import MobileNetV2
 from densenet_custom import densenet_custom
 
+from numpy_transforms import custom_image_datagen
+
 from optimizer_functions import sgdw_triangle
 
 # debug
@@ -21,7 +23,6 @@ seed = 1947
 os.environ['PYTHONHASHSEED'] = str(seed)
 np.random.seed(seed)
 tf.random.set_seed(seed)
-
 
 # Hyperparameters
 BATCH_SIZE = 32
@@ -38,6 +39,7 @@ IMAGE_SIZE = 64
 NUM_CLASSES = 200
 NUM_TRAIN_SAMPLES = 100 * 1000
 
+TF_AUGMENT = False
 ROOT_DIR = r'C:\stuff\datasets\tiny-imagenet-200'
 CACHE = True
 SHUFFLE = True
@@ -63,21 +65,15 @@ def get_train_files_labels(root, max_batch_size):
     paths = paths[:(len(paths)//max_batch_size) * max_batch_size]
 
     text_labels = [get_label_from_path(a) for a in paths]
-    classes = set(text_labels)
+    classes = list(set(text_labels))
+    # sort class labels so that the order is still maintained
+    # across different invokations of glob and/or shuffle
+    classes.sort()
     num_classes = len(classes)
     class_indices_map = dict(zip(classes, range(num_classes)))
     numeric_labels = [class_indices_map[a] for a in text_labels]
 
     return paths, numeric_labels, class_indices_map
-
-
-def get_tf_dataset(paths, labels):
-    paths_ds = tf.data.Dataset.from_tensor_slices(paths)
-    images_ds = paths_ds.map(lambda x: tf.io.read_file(x), autotune)
-
-    labels_ds = tf.data.Dataset.from_tensor_slices(labels)
-    datagen = tf.data.Dataset.zip((images_ds, labels_ds))
-    return datagen
 
 
 def get_val_paths_labels(root, class_indices_map):
@@ -91,12 +87,35 @@ def get_val_paths_labels(root, class_indices_map):
     return paths, numeric_labels
 
 
+def get_tf_dataset(paths, labels):
+    paths_ds = tf.data.Dataset.from_tensor_slices(paths)
+    images_ds = paths_ds.map(lambda x: tf.io.read_file(x), autotune)
+
+    labels_ds = tf.data.Dataset.from_tensor_slices(labels)
+    datagen = tf.data.Dataset.zip((images_ds, labels_ds))
+    return datagen
+
+
 def decode_image(x, y):
     # Decode a JPEG-encoded image to a uint8 tensor.
     x = tf.image.decode_jpeg(x, channels=3)
+    return x, y
+
+
+def normalize_convert_dtype(x, y):
     # Return image ranging from [-1, 1]
     x = tf.cast(x, tf.float32)
     x = (x / 128.) - 1.
+    return x, y
+
+# https://github.com/tensorflow/tensorflow/issues/24520#issuecomment-532958834
+# @tf.function(input_signature=[tf.TensorSpec(None, tf.uint8), tf.TensorSpec(None, tf.int32)])
+# @tf.autograph.experimental.do_not_convert
+def numpy_augment(x, y):
+    # image is expected to be in range [0-255]
+    im_shape = x.get_shape().as_list()
+    x = tf.numpy_function(func=custom_image_datagen, inp=[x], Tout=tf.uint8)
+    x.set_shape(im_shape)
     return x, y
 
 
@@ -118,14 +137,16 @@ def augment(image_size, batch_size):
     return augment_helper
 
 
-def debug_visualize(dataset, num_batches=1):
-    for xx, yy in dataset.take(num_batches):
-        for x, y in zip(xx, yy):
-            im_from_ds = x.numpy()
-            im = (im_from_ds + 1)/2
-            plt.imshow(im)
-            plt.title(f'{np.min(im_from_ds), np.max(im_from_ds)}')
-            plt.show()
+def debug_visualize(dataset, num_images=1):
+    dataset = dataset.unbatch()
+    for i, (x, y) in enumerate(dataset):
+        if num_images < (i + 1):
+            break
+        im_from_ds = x.numpy()
+        im = (im_from_ds + 1)/2
+        plt.imshow(im)
+        plt.title(f'{y}, {np.min(im_from_ds)}, {np.max(im_from_ds)}')
+        plt.show()
 
 
 def get_train_val_datasets():
@@ -146,10 +167,17 @@ def get_train_val_datasets():
 
     train_ds = train_ds.map(decode_image, autotune)
     train_ds = train_ds.batch(BATCH_SIZE)
-    train_ds = train_ds.map(augment(IMAGE_SIZE, BATCH_SIZE), autotune)
+
+    if TF_AUGMENT:
+        train_ds = train_ds.map(normalize_convert_dtype, autotune)
+        train_ds = train_ds.map(augment(IMAGE_SIZE, BATCH_SIZE), autotune)
+    else:
+        train_ds = train_ds.map(numpy_augment)
+        train_ds = train_ds.map(normalize_convert_dtype, autotune)
 
     val_ds = val_ds.map(decode_image, autotune)
     val_ds = val_ds.batch(BATCH_SIZE)
+    val_ds = val_ds.map(normalize_convert_dtype, autotune)
 
     return train_ds, val_ds
 
@@ -167,9 +195,11 @@ def get_optimizer():
 
 train_ds, val_ds = get_train_val_datasets()
 
-# debug_visualize(train_ds)
+# debug_visualize(train_ds, num_images=10)
+# quit()
 
 optimizer = get_optimizer()
+
 # model = MobileNetV2((64, 64, 3), weights=None, classes=NUM_CLASSES)
 model = densenet_custom()
 
@@ -188,5 +218,13 @@ model.fit(x=train_ds,
     epochs=EPOCHS,
     verbose=1,
     callbacks=[checkpointer])
+
+# class MyModel(tf.keras.Model):
+#   def call(self, x):
+#     return 2 * x
+
+# model = MyModel()
+# model.compile('sgd', 'mse')
+# model.fit(train_ds)
 
 print('Finished!')
