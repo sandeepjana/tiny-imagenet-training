@@ -219,12 +219,4 @@ model.fit(x=train_ds,
     verbose=1,
     callbacks=[checkpointer])
 
-# class MyModel(tf.keras.Model):
-#   def call(self, x):
-#     return 2 * x
-
-# model = MyModel()
-# model.compile('sgd', 'mse')
-# model.fit(train_ds)
-
 print('Finished!')

@@ -45,11 +45,13 @@ def custom_image_datagen(input_img):
           mode=ia.ALL
       )),
 
-      #drop 2-5% percent of the original size, leading to large dropped
-      # rectangles.
+      # size_percent=The size of the lower resolution image from which to sample
+      #  the dropout mask in percent of the input image. 
+      # Note that this means that lower values of this parameter 
+      # lead to larger areas being dropped
       sometimes(iaa.CoarseDropout(
-                        (0.03, 0.10), size_percent=(0.01, 0.03),
-                        per_channel=0.2
+                        p=(0.03, 0.10), size_percent=(0.1, 0.2),
+                        per_channel=False
                     )),
 
       # Make some images brighter and some darker.
